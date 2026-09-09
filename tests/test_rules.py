@@ -248,6 +248,79 @@ class TestFunding(unittest.TestCase):
         self.assertGreater(fb.charge("X", "SELL", 10_000.0, START, t + 1), 0)
 
 
+class TestPackaging(unittest.TestCase):
+    """Every source file must actually be IN the repository.
+
+    A bare `data/` line in .gitignore silently matched jarvis5/data/ and kept
+    the exchange loader out of the repo entirely; everything worked locally
+    and a fresh clone died with ModuleNotFoundError. This catches that class
+    of failure at the point it is introduced.
+    """
+
+    def _repo_root(self):
+        return os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+
+    def test_every_source_file_is_tracked_by_git(self):
+        import subprocess
+        root = self._repo_root()
+        try:
+            tracked = subprocess.run(
+                ["git", "ls-files"], cwd=root, capture_output=True,
+                text=True, check=True).stdout.split()
+        except Exception as exc:                       # not a git checkout
+            self.skipTest(f"git unavailable: {exc}")
+        tracked = {os.path.normpath(p) for p in tracked}
+
+        missing = []
+        for sub in ("jarvis5", "scripts", "tests", "config"):
+            base = os.path.join(root, sub)
+            if not os.path.isdir(base):
+                continue
+            for dirpath, dirs, files in os.walk(base):
+                dirs[:] = [d for d in dirs if d != "__pycache__"]
+                for f in files:
+                    if not f.endswith((".py", ".sh", ".json")):
+                        continue
+                    rel = os.path.relpath(os.path.join(dirpath, f), root)
+                    if os.path.normpath(rel) not in tracked:
+                        missing.append(rel)
+        self.assertEqual(sorted(missing), [],
+                         "source files exist on disk but are NOT in the repo, "
+                         "so a fresh clone would be broken:\n  "
+                         + "\n  ".join(sorted(missing)))
+
+    def test_every_package_has_an_init(self):
+        root = self._repo_root()
+        pkg = os.path.join(root, "jarvis5")
+        missing = []
+        for dirpath, dirs, files in os.walk(pkg):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            if any(f.endswith(".py") for f in files) and "__init__.py" not in files:
+                missing.append(os.path.relpath(dirpath, root))
+        self.assertEqual(missing, [])
+
+    def test_every_module_imports(self):
+        """A fresh interpreter must be able to import the whole package."""
+        import importlib
+        root = self._repo_root()
+        pkg = os.path.join(root, "jarvis5")
+        failures = []
+        for dirpath, dirs, files in os.walk(pkg):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in sorted(files):
+                if not f.endswith(".py") or f == "__main__.py":
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, f), root)
+                mod = rel[:-3].replace(os.sep, ".")
+                if mod.endswith(".__init__"):
+                    mod = mod[:-9]
+                try:
+                    importlib.import_module(mod)
+                except Exception as exc:
+                    failures.append(f"{mod}: {type(exc).__name__}: {exc}")
+        self.assertEqual(failures, [])
+
+
 class TestNoMachineLearning(unittest.TestCase):
     """Spec: this build must contain no ML anywhere in the decision path."""
 

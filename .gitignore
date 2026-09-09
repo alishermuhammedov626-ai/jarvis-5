@@ -4,10 +4,13 @@ __pycache__/
 venv/
 .env
 
-# historical data cache and backtest output are reproducible artefacts
-data/
-data_synthetic/
-results/
+# Historical data cache and backtest output are reproducible artefacts.
+# These MUST be anchored with a leading slash: a bare `data/` also matches
+# jarvis5/data/, which silently kept the exchange loader out of the repo.
+/data/
+/data_synthetic/
+/results/
+/reports/
 *.tar.gz
 *.log
 
