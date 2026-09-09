@@ -334,3 +334,184 @@ RAM: 1 yillik 6 coin ≈ 250 MB.
   Shuning uchun hisobot 4 qatlamli cost breakdown beradi.
 * Bu repo **backtest** tizimi. Live order routing, exchange kalitlari va real
   buyurtma yuborish bu yerda **yo'q**.
+
+---
+
+# JARVIS 5 RESEARCH — Market Move Cause Discovery
+
+> **Bu modul trading engine'ni O'ZGARTIRMAYDI.** U alohida `jarvis5/research/`
+> paketida yashaydi, faqat mavjud detektorlarni **o'qish uchun** ishlatadi va
+> hech qanday yangi strategiya, ML, AI yoki probability score qo'shmaydi.
+> `tests/test_research.py::TestTradingEngineUntouched` buni tekshiradi.
+
+## Asosiy savol
+
+> "6 ta coinda 1 yil davomida yuz bergan **1%+ harakatlar oldidan** bozor
+> qanday pattern va kombinatsiyalar asosida harakat qilgan?"
+
+## Ikki bosqich — real dataga avtomatik o'tilmaydi
+
+```bash
+# BOSQICH 1 — sintetik validatsiya (real dataga tegmaydi)
+python -m jarvis5.research.synthetic
+
+# BOSQICH 2 — real Binance data (1-bosqich PASS bo'lmasa ISHLAMAYDI)
+python -m jarvis5.research \
+  --coins DOGEUSDT,1000PEPEUSDT,1000SHIBUSDT,PUMPUSDT,1000BONKUSDT,WIFUSDT \
+  --days 365 --timeframe 1m
+```
+
+Yoki hammasi bitta buyruqda: `bash scripts/run_research.sh 365`
+
+Bosqich 1 muvaffaqiyatli bo'lsa ham **avtomatik ravishda** bosqich 2 ga
+o'tmaydi — real dataga qaratish ongli qaror bo'lishi kerak.
+
+## Sintetik validatsiya nima qiladi
+
+10 xil ssenariy **ataylab** yaratiladi va ularning aniq indekslari ground
+truth sifatida saqlanadi: sweep→MSS→displacement, sweep→FVG, Wyckoff spring,
+RSI reversal, volume breakout, false breakout, trend continuation, range
+breakout, **RANDOM** va **NOISE** (pattern shakli bor, lekin davomi yo'q).
+
+Tekshiriladi: event coverage, pattern detection, kombinatsiya yig'ilishi,
+MFE/MAE izchilligi, va eng muhimi — o'sha detektorlar RANDOM segmentda ham
+xuddi shunday tez-tez ishlaydimi. **Har joyda "sweep" deb baqiradigan
+detektor hech nima topmagan.**
+
+## Metodologiya — nega bu "win rate" emas
+
+Asosiy ko'rsatkich **edge**:
+
+```
+edge = P(1% move | pattern) − P(1% move | pattern yo'q)
+```
+
+Control group — qolgan **barcha** sampled barlar (tasodifiy tanlanmagan,
+balki to'liq). Agar pattern 1% harakatlar oldidan 70% uchrasa, lekin oddiy
+bozorda ham 65% uchrasa — bu **5 punktlik edge**, 70 emas. `relative_lift`
+va `odds_ratio` ham beriladi.
+
+Baseline populyatsiya har `BASELINE_STRIDE`-bar (default 5) sistematik
+tanlanadi va **natijadan mustaqil**. Event origin barlari populyatsiyaga
+qo'shilmaydi — aks holda taqqoslash buzilardi.
+
+## No-look-ahead — ikki bosqichli ajratish
+
+| Bosqich | Kelajakka qarashi | Nima qiladi |
+|---|---|---|
+| **PASS 1 — outcomes** | **Ha, ataylab** | "1% harakat bo'ldimi?" — bu savolga javob berish uchun kelajak kerak |
+| **PASS 2 — patterns** | **Yo'q, hech qachon** | Bar-bar oldinga yuradi, faqat o'sha lahzada ko'ringan narsani yozadi |
+
+Ikkalasi faqat **bar indeksi** orqali bog'lanadi. Pattern hech qachon o'zi
+oldindan aytishi kerak bo'lgan natijadan hisoblanmaydi.
+
+Tekshiruvlar: **truncation invariance** (datani `T` da kessak, `T` gacha
+bo'lgan patternlar bir xil qolishi shart) va **scale invariance** (narx
+×10 / ×50 / ×100 — pattern to'plami o'zgarmasligi shart).
+
+## Event aniqlash
+
+Har M1 candle potensial origin. `+1%` (long) yoki `-1%` (short) targetlar
+`EVENT_HORIZON_BARS` (default 120 daqiqa) ichida tekshiriladi. Naive skanerlash
+O(n×horizon) bo'lardi; bu yerda har target uchun bitta **heap** ishlatiladi —
+har origin **birinchi** teginishda hal bo'ladi, umumiy O(n log n).
+
+Bitta impuls yuzlab signal bo'lib sanalmasligi uchun **clustering**: yangi
+origin joriy impulsga qo'shiladi, agar impuls hali davom etayotgan bo'lsa
+va narx `CLUSTER_RESET_PCT` (50%) qaytmagan bo'lsa. Reset testi faqat
+harakat `CLUSTER_MIN_EXTENSION_PCT` (0.5%) uzayganidan keyin yoqiladi —
+aks holda range ichidagi oddiy tebranish bitta impulsni o'nlab soxta
+eventga bo'lib yuborardi.
+
+Har event **impulse_start** bilan ham belgilanadi: `event_start` va
+ekstremum orasidagi eng past low (long uchun). Pattern aynan o'sha barda
+o'qiladi — trader haqiqatan harakat qilishi kerak bo'lgan bar.
+
+## O'lchanadigan patternlar
+
+- **SMC**: 10 xil liquidity turi, equal high/low cluster, sweep (+ STRONG/
+  MEDIUM/WEAK sifat bahosi), HH/HL/LH/LL, BOS/CHOCH/MSS (internal va
+  external alohida), displacement, OB, FVG, breaker, mitigation zone,
+  premium/discount/equilibrium — **M1, M5, M15 uchun alohida**
+- **Wyckoff**: accumulation, distribution, spring, upthrust, SOS, SOW,
+  LPS, LPSY, trading range, breakout/breakdown, false breakout,
+  re-accumulation, re-distribution
+- **RSI(14)**: <20, <30, 30/40/50 reclaim, >50, >70, >80, bullish/bearish
+  divergence, failure swing, momentum reversal
+- **Volume**: spike, expansion, contraction, climax, >1.5x/2x/3x,
+  high-volume rejection/breakout, low-volume breakout
+- **Price action**: engulfing, pin bar, hammer, shooting star, inside/outside
+  bar, large body, breakout candle, false breakout, breakout+retest,
+  momentum va reversal candle
+- **20 ta kombinatsiya** (sweep+BOS, sweep+MSS+FVG+OB, double sweep, ...)
+  va **JARVIS setup oilalari A/B/C/D**
+
+Kombinatsiyalarda **tartib muhim**: sweep'dan *oldin* bo'lgan break
+"sweep+break" hisoblanmaydi.
+
+Har pattern 6 ta oynada o'lchanadi: **5 / 10 / 20 / 30 / 60 / 120 daqiqa**.
+Ichkarida ular *disjoint* yosh binlariga yoziladi va hisobotda kumulyativ
+yig'iladi — bir xil arifmetika, 4 barobar tez.
+
+## Halollik qoidalari (spec 15, 16, 26, 35)
+
+- `n < 30` → **INSUFFICIENT SAMPLE**. `n < 100` → **EXPLORATORY**.
+- Hech qanday strategiya **100 taga to'ldirilmaydi**. 17 ta bo'lsa — 17 deb yoziladi.
+- Bir eventda bir nechta pattern bo'lsa, **hammasi** alohida tag sifatida saqlanadi.
+- Verdikt: `ROBUST` / `PROMISING` / `WEAK` / `INSUFFICIENT SAMPLE` /
+  `OVERFIT RISK` / `OVERFIT / FAILED OOS`.
+- Coin consistency: `CROSS_COIN_CONSISTENT` / `PARTIAL` / `COIN_SPECIFIC` /
+  `SINGLE_COIN`. **Bitta coin dalil emas.**
+- DISCOVERY 70% → VALIDATION 15% → OOS 15%, faqat xronologik, shuffle yo'q.
+- Agar hech bir pattern barcha filtrlardan o'tmasa, savol 30 ga javob
+  **"None"** bo'ladi. Ro'yxatni to'ldirish uchun hech nima ko'tarilmaydi.
+
+## Entry simulation (research only)
+
+Har sampled barda gipotetik entry: structure-based SL (0.30–0.50%),
+targetlar 1.0 / 1.5 / 2.0 / 3.0%, risk 0.35%, 17x. **WITHOUT TRAILING** va
+**WITH TRAILING** (+0.35% activation) alohida. Commission notional ustidan,
+slippage har tomonga, funding — mavjud bo'lmasa `UNAVAILABLE`.
+
+Bir xil trade'lar barcha patternlarga taqsimlanadi, shuning uchun patternlar
+bir-biri bilan **aynan bir xil savdolarda** taqqoslanadi.
+
+> Bu **strategiya backtesti emas**: kunlik limit, cooldown, setup gating
+> yo'q. U patternning qiymatini o'lchaydi, JARVIS 5 nima savdo qilishini emas.
+
+## Chiqadigan fayllar (`reports/`)
+
+`overall_summary.csv` · `coin_summary.csv` · `strategy_summary.csv` ·
+`strategy_by_coin.csv` · `strategy_by_direction.csv` ·
+`combination_summary.csv` · `event_summary.csv` · `oos_summary.csv` ·
+`rejection_summary.csv` · `data_quality.csv` · `top_setups.csv` ·
+`full_event_database.csv` · `full_report.json` · **`FINAL_REPORT.md`**
+
+`FINAL_REPORT.md` — 30 ta savolga to'liq javob (spec 28).
+
+## Konfiguratsiya va tezlik
+
+`jarvis5/research/config.py` — 69 parametr. Presetlar:
+`config/research_default.json`, `research_fast.json` (stride 15),
+`research_dense.json` (stride 2), `research_60min.json`.
+
+```bash
+python -m jarvis5.research --set BASELINE_STRIDE=10 --set EVENT_HORIZON_BARS=60
+```
+
+Taxminan **~1 400 M1 bar/sekund**: 6 coin × 365 kun ≈ **35–45 daqiqa**
+(stride 5). `research_fast.json` bilan ≈ 15 daqiqa.
+
+## Testlar
+
+```bash
+python -m unittest discover -s tests        # 78 test
+```
+
+Spec 31 talab qilgan testlar: `test_event_detection`, `test_event_clustering`,
+`test_no_lookahead`, `test_liquidity_detection`, `test_smc_detection`,
+`test_wyckoff_detection`, `test_rsi_detection`, `test_volume_detection`,
+`test_price_action_detection`, `test_combination_detection`, `test_mfe_mae`,
+`test_target_detection`, `test_cost_calculation`, `test_risk_calculation`,
+`test_oos_split`, `test_report_generation` — hammasi + truncation invariance
+va scale invariance.
