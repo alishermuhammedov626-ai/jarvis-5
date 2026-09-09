@@ -1,0 +1,9 @@
+# JARVIS 5 runtime dependencies.
+#
+# The strategy engine, backtester and every analysis module are pure Python
+# standard library -- deliberately, so a server run needs no build toolchain
+# and results cannot shift with a BLAS/numpy version change.
+#
+# `requests` is used ONLY by the historical-data downloader
+# (python -m jarvis5 download); the backtest itself never touches the network.
+requests>=2.28.0
